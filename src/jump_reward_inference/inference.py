@@ -1,5 +1,9 @@
-import numpy as np
+from collections import defaultdict
+
 import matplotlib.pyplot as plt
+import numpy as np
+from IPython import display
+
 from jump_reward_inference.state_space_1D import beat_state_space_1D, downbeat_state_space_1D
 
 
@@ -190,6 +194,8 @@ class inference_1D:
             subplot4.title.set_text('Downbeat states jumping back weigths')
             fig.tight_layout()
 
+            hdisplay = display.display("", display_id=True)
+
         # output vector initialization for beat, downbeat, tempo and meter
         output = np.zeros((1, 4), dtype=float)
         # Beat and downbeat belief state initialization
@@ -204,6 +210,10 @@ class inference_1D:
         both_activations = activations.copy()
         activations = np.max(activations, axis=1)
         activations[activations < self.ig_threshold] = 0.03
+
+        self.all_debug = defaultdict(list)
+        self.all_debug['beat_distribution'] = []
+        self.all_debug['jump_weights'] = []
 
         for i in range(len(activations)):  # loop through all frames to infer beats/downbeats
             counter += 1
@@ -224,6 +234,7 @@ class inference_1D:
             #  Beat correction
             if activations[i] > self.ig_threshold:  # beat correction is done only when there is a meaningful activation
                 obs = densities(activations[i], self.om, self.st)
+                self.all_debug['Observation likelihood'].append(obs)
                 beat_distribution_old = beat_distribution.copy()
                 beat_distribution = beat_distribution_old * obs
                 if np.min(beat_distribution) < 1e-5:   # normalize beat distribution if its minimum is below a threshold
@@ -235,93 +246,97 @@ class inference_1D:
                 if np.max(-beat_jump_rewards) != 0:
                     beat_jump_rewards = -4 * beat_jump_rewards / np.max(-beat_jump_rewards)
                     self.st.jump_weights += beat_jump_rewards
+                # print(beat_distribution_old)
+                # print(beat_jump_rewards2)
+                # print(beat_jump_rewards)
                 local_tempo = round(self.fps * 60 / (np.argmax(self.st.jump_weights) + 1))
             else:
+                self.all_debug['Observation likelihood'].append(np.zeros_like(beat_distribution))
                 beat_jump_rewards1[:self.st.min_interval - 1] = 0
                 self.st.jump_weights += 2 * beat_jump_rewards1
                 self.st.jump_weights[:self.st.min_interval - 1] = 0
                 beat_max = np.argmax(beat_distribution)
 
-            #  downbeat detection
-            if (beat_max < (
-                    int(.07 / T)) + 1) and (counter * T + self.offset) - output[-1][
-                0] > .45 * T * self.st.min_interval:  # here the local tempo (:np.argmax(self.st.jump_weights)+1): can be used as the criteria rather than the minimum tempo
-                local_beat = 'NoooOOoooW!'
-
-                #   downbeat transition   (motion)
-                if np.max(self.st2.jump_weights) > 1:
-                    self.st2.jump_weights = 0.2 * self.st2.jump_weights / np.max(self.st2.jump_weights)
-                d_weight = self.st2.jump_weights.copy()
-                down_jump_rewards1 = - down_distribution * d_weight
-                d_weight[d_weight < 0.2] = 0
-                down_distribution1 = sum(down_distribution * d_weight)  # jump back
-                down_distribution2 = np.roll((down_distribution * (1 - d_weight)), 1)  # move forward
-                down_distribution2[0] += down_distribution1
-                down_distribution = down_distribution2
-
-                #  Downbeat correction
-                if both_activations[i][1] > 0.00002:
-                    obs2 = densities2(both_activations[i], self.om2, self.st2)
-                    down_distribution_old = down_distribution.copy()
-                    down_distribution = down_distribution_old * obs2
-                    if np.min(down_distribution) < 1e-5: # normalize downbeat distribution if its minimum is below a threshold
-                        down_distribution = 0.8 * down_distribution/np.max(down_distribution)
-                    down_max = np.argmax(down_distribution)
-                    down_jump_rewards2 = down_distribution - down_distribution_old  # downbeat correction rewards calculation
-                    down_jump_rewards = down_jump_rewards2
-                    down_jump_rewards[:self.st2.max_interval - 1] = 0
-                    if np.max(-down_jump_rewards) != 0:
-                        down_jump_rewards = -0.3 * down_jump_rewards / np.max(-down_jump_rewards)
-                        self.st2.jump_weights = self.st2.jump_weights + down_jump_rewards
-                    meter = np.argmax(self.st2.jump_weights) + 1
-                else:
-                    down_jump_rewards1[:self.st2.min_interval - 1] = 0
-                    self.st2.jump_weights += 2 * down_jump_rewards1
-                    self.st2.jump_weights[:self.st2.min_interval - 1] = 0
-                    down_max = np.argmax(down_distribution)
-
-                #  Beat vs Downbeat mark off
-                if down_max == self.st2.first_states[0]:
-                    output = np.append(output, [[counter * T + self.offset, 1, local_tempo, meter]], axis=0)
-                    last_detected = "Downbeat"
-                else:
-                    output = np.append(output, [[counter * T + self.offset, 2, local_tempo, meter]], axis=0)
-                    last_detected = "Beat"
-                #  Downbeat probability mass and weights
-                if self.plot:
-                    subplot3.cla()
-                    subplot4.cla()
-                    down_distribution = down_distribution / np.max(down_distribution)
-                    subplot3.bar(np.arange(self.st2.num_states), down_distribution, color='maroon', width=0.4,
-                                 alpha=0.2)
-                    subplot3.bar(0, both_activations[i][1], color='green', width=0.4, alpha=0.3)
-                    # subplot3.bar(np.arange(1, self.st2.num_states), both_activations[i][0], color='yellow', width=0.4, alpha=0.3)
-                    subplot4.bar(np.arange(self.st2.num_states), self.st2.jump_weights, color='maroon', width=0.4,
-                                 alpha=0.2)
-                    subplot4.set_ylim([0, 1])
-                    subplot3.title.set_text('Downbeat tracking 1D inference model')
-                    subplot4.title.set_text(f'Downbeat states jumping back weigths')
-                    subplot4.text(1, -0.26, f'The type of the last detected event: {last_detected}',
-                                  horizontalalignment='right', verticalalignment='center', transform=subplot2.transAxes,
-                                  fontdict=font)
-                    subplot4.text(1, -1.63, f'Local time signature = {meter}/4 ', horizontalalignment='right',
-                                  verticalalignment='center', transform=subplot2.transAxes, fontdict=font)
-                    position2 = down_max
-                    subplot3.axvline(x=position2)
+            # #  downbeat detection
+            # if (beat_max < (
+            #         int(.07 / T)) + 1) and (counter * T + self.offset) - output[-1][
+            #     0] > .45 * T * self.st.min_interval:  # here the local tempo (:np.argmax(self.st.jump_weights)+1): can be used as the criteria rather than the minimum tempo
+            #     local_beat = 'NoooOOoooW!'
+            #
+            #     #   downbeat transition   (motion)
+            #     if np.max(self.st2.jump_weights) > 1:
+            #         self.st2.jump_weights = 0.2 * self.st2.jump_weights / np.max(self.st2.jump_weights)
+            #     d_weight = self.st2.jump_weights.copy()
+            #     down_jump_rewards1 = - down_distribution * d_weight
+            #     d_weight[d_weight < 0.2] = 0
+            #     down_distribution1 = sum(down_distribution * d_weight)  # jump back
+            #     down_distribution2 = np.roll((down_distribution * (1 - d_weight)), 1)  # move forward
+            #     down_distribution2[0] += down_distribution1
+            #     down_distribution = down_distribution2
+            #
+            #     #  Downbeat correction
+            #     if both_activations[i][1] > 0.00002:
+            #         obs2 = densities2(both_activations[i], self.om2, self.st2)
+            #         down_distribution_old = down_distribution.copy()
+            #         down_distribution = down_distribution_old * obs2
+            #         if np.min(down_distribution) < 1e-5: # normalize downbeat distribution if its minimum is below a threshold
+            #             down_distribution = 0.8 * down_distribution/np.max(down_distribution)
+            #         down_max = np.argmax(down_distribution)
+            #         down_jump_rewards2 = down_distribution - down_distribution_old  # downbeat correction rewards calculation
+            #         down_jump_rewards = down_jump_rewards2
+            #         down_jump_rewards[:self.st2.max_interval - 1] = 0
+            #         if np.max(-down_jump_rewards) != 0:
+            #             down_jump_rewards = -0.3 * down_jump_rewards / np.max(-down_jump_rewards)
+            #             self.st2.jump_weights = self.st2.jump_weights + down_jump_rewards
+            #         meter = np.argmax(self.st2.jump_weights) + 1
+            #     else:
+            #         down_jump_rewards1[:self.st2.min_interval - 1] = 0
+            #         self.st2.jump_weights += 2 * down_jump_rewards1
+            #         self.st2.jump_weights[:self.st2.min_interval - 1] = 0
+            #         down_max = np.argmax(down_distribution)
+            #
+            #     #  Beat vs Downbeat mark off
+            #     if down_max == self.st2.first_states[0]:
+            #         output = np.append(output, [[counter * T + self.offset, 1, local_tempo, meter]], axis=0)
+            #         last_detected = "Downbeat"
+            #     else:
+            #         output = np.append(output, [[counter * T + self.offset, 2, local_tempo, meter]], axis=0)
+            #         last_detected = "Beat"
+            #     #  Downbeat probability mass and weights
+            #     if self.plot:
+            #         subplot3.cla()
+            #         subplot4.cla()
+            #         down_distribution = down_distribution / np.max(down_distribution)
+            #         subplot3.bar(np.arange(self.st2.num_states), down_distribution, color='maroon', width=0.4,
+            #                      alpha=0.2)
+            #         subplot3.bar(0, both_activations[i][1], color='green', width=0.4, alpha=0.3)
+            #         # subplot3.bar(np.arange(1, self.st2.num_states), both_activations[i][0], color='yellow', width=0.4, alpha=0.3)
+            #         subplot4.bar(np.arange(self.st2.num_states), self.st2.jump_weights, color='maroon', width=0.4,
+            #                      alpha=0.2)
+            #         subplot4.set_ylim([0, 1])
+            #         subplot3.title.set_text('Downbeat tracking 1D inference model')
+            #         subplot4.title.set_text(f'Downbeat states jumping back weigths')
+            #         subplot4.text(1, -0.26, f'The type of the last detected event: {last_detected}',
+            #                       horizontalalignment='right', verticalalignment='center', transform=subplot2.transAxes,
+            #                       fontdict=font)
+            #         subplot4.text(1, -1.63, f'Local time signature = {meter}/4 ', horizontalalignment='right',
+            #                       verticalalignment='center', transform=subplot2.transAxes, fontdict=font)
+            #         position2 = down_max
+            #         subplot3.axvline(x=position2)
                     
             #  Downbeat probability mass and weights
+            beat_distribution = beat_distribution / np.max(beat_distribution)
+            # print(counter, activations[i])
             if self.plot:  # activates this when you want to plot the performance
                 if counter % 1 == 0:  # Choosing how often to plot
-                    print(counter)
                     subplot1.cla()
                     subplot2.cla()
-                    beat_distribution = beat_distribution / np.max(beat_distribution)
                     subplot1.bar(np.arange(self.st.num_states), beat_distribution, color='maroon', width=0.4, alpha=0.2)
                     subplot1.bar(0, activations[i], color='green', width=0.4, alpha=0.3)
                     # subplot2.bar(np.arange(self.st.num_states), np.concatenate((np.zeros(self.st.min_interval),self.st.jump_weights)), color='maroon', width=0.4, alpha=0.2)
                     subplot2.bar(np.arange(self.st.num_states), self.st.jump_weights, color='maroon', width=0.4,
                                  alpha=0.2)
-                    subplot2.set_ylim([0, 1])
+                    subplot2.set_ylim([-4, 4])
                     subplot1.title.set_text('Beat tracking 1D inference model')
                     subplot2.title.set_text("Beat states jumping back weigths")
                     subplot1.text(1, 2.48, f'Beat moment: {local_beat} ', horizontalalignment='right',
@@ -330,7 +345,13 @@ class inference_1D:
                                   verticalalignment='top', transform=subplot2.transAxes, fontdict=font)
                     position = beat_max
                     subplot1.axvline(x=position)
-                    plt.pause(0.05)
+                    hdisplay.update(fig)
+                    # plt.pause(0.05)
                     subplot1.clear()
+
+            self.all_debug['beat_distribution'].append(beat_distribution.copy())
+            self.all_debug['jump_weights'].append(self.st.jump_weights.copy())
+            self.all_debug['State Estimate'].append(beat_max)
+            self.all_debug['local_tempo'].append(local_tempo)
 
         return output[1:]

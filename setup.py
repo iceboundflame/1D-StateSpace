@@ -18,17 +18,17 @@ import distutils.cmd
 # Required packages
 REQUIRED_PACKAGES = [
     'numpy',
-    'Cython',
-    'librosa>=0.8.0',
-    'numba==0.54.1',
-    'mido>=1.2.6',
+    # 'Cython',
+    # 'librosa>=0.8.0',
+    # 'numba==0.54.1',
+    # 'mido>=1.2.6',
     'pytest',
     #'pyaudio',
     ##'pyfftw',
-    'torch',
-    'Matplotlib',
-    'BeatNet>=0.0.4',
-    'madmom',
+    # 'torch',
+    # 'Matplotlib',
+    # 'BeatNet>=0.0.4',
+    # 'madmom',
 ]
 
 
